@@ -79,9 +79,9 @@ if args.data_path is None:
 # please change it to your own datapath for CIFAR-N
 if args.noise_path is None:
     if args.dataset == 'cifar10':
-        args.noise_path = './data/CIFAR-10_human.pt'
+        args.noise_path = './data/CIFAR_10_human.pt'
     elif args.dataset == 'cifar100':
-        args.noise_path = './data/CIFAR-100_human.pt'
+        args.noise_path = './data/CIFAR_100_huuman.pt'
     else:
         pass
 
@@ -474,9 +474,10 @@ warm_up = args.pretrain_ep
 #unique file name to record the synthetic noise for CIFAR-10/100
 time = str(datetime.now())[-6:]
 loader = dataloader.cifarn_dataloader(args.dataset, noise_type=args.noise_type, noise_path=args.noise_path,
-                                      is_human=args.is_human, batch_size=args.batch_size, num_workers=8, \
+                                      is_human=args.is_human, batch_size=args.batch_size, num_workers=8,
                                       root_dir=args.data_path, log=stats_log,
-                                      noise_file='%s/noise_file/%s_%s.json' % (args.data_path,args.noise_type,time),r = args.noise_rate , noise_mode = args.noise_mode)
+                                      noise_file='%s/noise_file/%s_%s.json' % (args.data_path,args.noise_type,time),
+                                      r=args.noise_rate, noise_mode=args.noise_mode)
 
 print('| Building net')
 dualnet = create_model()

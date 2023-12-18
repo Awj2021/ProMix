@@ -51,10 +51,18 @@ After creating a virtual environment, run
 pip install -r requirements.txt
 ```
 
+
 We provide the shell codes for model training in the `run.sh` file. Please download the source data of CIFAR-10/100 and the noise file of CIFAR-N following [Learning with Noisy Labels Revisited: A Study Using Real-World Human Annotations](https://github.com/UCSC-REAL/cifar-10-100n) and put them under the `data` folder.
 
 
+### Issues
+Environment settings.
+```
+conda create -n promix python=3.9
+pip install torch==1.8.1+cu111 torchvision==0.9.1+cu111 torchaudio==0.8.1 -f https://download.pytorch.org/whl/torch_stable.html
+```
 
+Then delete packages of torch, torchaudio, torchfile... in the requirements.txt.  Finally installing other packages with conda or pip.
 
 
 ###  Acknowledgement

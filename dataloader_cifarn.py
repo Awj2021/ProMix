@@ -96,8 +96,8 @@ class cifarn_dataset(Dataset):
                             noise_label.append(train_label[i])   
                     self.train_noisy_labels = noise_label
                     self.noise_or_not = np.transpose(self.train_noisy_labels) != np.transpose(self.train_labels)
-                    print("save noisy labels to %s ..."%noise_file)        
-                    json.dump(noise_label,open(noise_file,"w"))
+                    print("save noisy labels to %s ..."%noise_file)
+                    json.dump(noise_label, open(noise_file,"w"))
 
                 elif self.noise_mode == 'cifarn':
                     if noise_type != 'clean':
