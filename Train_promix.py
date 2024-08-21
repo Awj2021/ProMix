@@ -15,6 +15,8 @@ from utils.utils import *
 from utils.fmix import *
 from sklearn.mixture import GaussianMixture
 from datetime import datetime
+import wandb
+
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR Training')
 parser.add_argument('--batch_size', default=256, type=int, help='train batchsize')
@@ -53,10 +55,15 @@ parser.add_argument('--noise_rate', default=0.2, type=float,
                     help='noise rate for synthetic noise')
 parser.add_argument('--bias_m', default=0.9999, type=float,
                     help='moving average parameter of bias estimation')
+parser.add_argument('--project_name', default='ProMix', type=str, help='wandb project name')
+parser.add_argument('--wandb', action='store_true', default=False)
+
 args = parser.parse_args()
 [args.rho_start, args.rho_end] = [float(item) for item in args.rho_range.split(',')]
 print(args)
 
+running_name = f'baseline_{args.dataset}_{args.noise_type}_{args.num_epochs}_{args.seed}'
+wandb.init(project=args.project_name, name=running_name, config=args) if args.wandb else None
 torch.cuda.set_device(args.gpuid)
 random.seed(args.seed)
 torch.manual_seed(args.seed)
@@ -79,7 +86,7 @@ if args.data_path is None:
 # please change it to your own datapath for CIFAR-N
 if args.noise_path is None:
     if args.dataset == 'cifar10':
-        args.noise_path = './data/CIFAR_10_human.pt'
+        args.noise_path = './data/CIFAR-10_human.pt'
     elif args.dataset == 'cifar100':
         args.noise_path = './data/CIFAR_100_huuman.pt'
     else:
@@ -246,7 +253,7 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
         loss_ce_ph = CEsoft(outputs_x_ph[idx_chosen], targets=pseudo_label_l[idx_chosen]).mean()
         # loss for net1-primary head
         loss_net1 = loss_ce + w * (loss_cr + loss_mix + loss_fmix)
-        
+        wandb.log({'loss_net1_primary': loss_net1.item(), 'epoch': epoch, 'num_iter': num_iter}) if args.wandb else None
         
         # loss for noisy samples on the pseudo head 
         ptx = debias_px_unrel ** (1 / args.T)
@@ -257,7 +264,7 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
                   + w * CEsoft(outputs_x2_unrel_ph[idx_unchosen], targets=targets_urel[idx_unchosen]).mean()
         #loss for net1-pseudo head
         loss_net1_ph = beta * loss_unrel_ph + loss_ce_ph + w * (loss_cr_ph + loss_mix_ph + loss_fmix_ph)
-        
+        wandb.log({'loss_net1_pseudo': loss_net1_ph.item(), 'epoch': epoch, 'num_iter': num_iter}) if args.wandb else None
 
         #-----Below: loss for net2, similar to net1-----
         
@@ -303,7 +310,8 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
         # cross entropy loss for primary head and pseudo head
         loss_ce2 = CEsoft(outputs_a[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
         loss_ce2_ph = CEsoft(outputs_a_ph[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
-        loss_net2 = loss_ce2 + w * (loss_cr2 + loss_mix2 + loss_fmix2)
+        loss_net2 = loss_ce2 + w * (loss_cr2 + loss_mix2 + loss_fmix2) 
+        wandb.log({'loss_net2_primary': loss_net2.item(), 'epoch': epoch, 'num_iter': num_iter}) if args.wandb else None
         # Above: loss for net2-primary head
 
         # unrel loss for reliable samples on the pseudo head 
@@ -314,10 +322,11 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
                   + w * CEsoft(outputs_a2_unrel_ph[idx_unchosen_2], targets=targets_urel2[idx_unchosen_2]).mean()
         #loss for net2-pseudo head
         loss_net2_ph = beta * loss_unrel2_ph + loss_ce2_ph + w * (loss_cr2_ph + loss_mix2_ph + loss_fmix2_ph)
-        # 
+        wandb.log({'loss_net2_pseudo': loss_net2_ph.item(), 'epoch': epoch, 'num_iter': num_iter}) if args.wandb else None
         
         # total loss
         loss = loss_net1 + loss_net2 + loss_net1_ph + loss_net2_ph
+        wandb.log({'loss_total': loss.item(), 'epoch': epoch, 'num_iter': num_iter}) if args.wandb else None
         # moving average estimation of bias for D_l and D_u seperately
         pi1 = bias_update(px[idx_chosen], pi1, args.bias_m)
         pi2 = bias_update(px2[idx_chosen_2], pi2, args.bias_m)
@@ -355,7 +364,7 @@ def warmup(epoch, net, net2, optimizer, dataloader):
             L = loss
         L.backward()
         optimizer.step()
-
+        wandb.log({'loss_warmup': L.item(), 'epoch': epoch, 'num_iter': num_iter}) if args.wandb else None
         if batch_idx % 100 == 0:
             print('%s:%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t CE-loss: %.4f  Penalty-loss: %.4f  All-loss: %.4f'
                          % (
@@ -412,6 +421,7 @@ def test(epoch, net1, net2):
     acc2 = 100. * correct2 / total
     accmean_ori = 100. * correctmean_ori / total
     print("| Test Epoch #%d\t Acc Net1: %.2f%%, Acc Net2: %.2f%% Acc Mean: %.2f%%\n" % (epoch, acc, acc2,  accmean_ori))
+    wandb.log({'acc_net1': acc, 'acc_net2': acc2, 'acc_mean': accmean_ori, 'epoch': epoch}) if args.wandb else None
     test_log.write('Epoch:%d   Accuracy:%.2f\n' % (epoch, acc))
     test_log.flush()
 

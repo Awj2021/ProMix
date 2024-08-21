@@ -51,9 +51,17 @@ After creating a virtual environment, run
 pip install -r requirements.txt
 ```
 
+After installing all the packages, and the code runs correctly, export the environment setting for 
+future usage.  
+```
+conda env export > environment.yml
+```
 
 We provide the shell codes for model training in the `run.sh` file. Please download the source data of CIFAR-10/100 and the noise file of CIFAR-N following [Learning with Noisy Labels Revisited: A Study Using Real-World Human Annotations](https://github.com/UCSC-REAL/cifar-10-100n) and put them under the `data` folder.
 
+
+#### DataSet Prepare.
+Directly copy the dataset from the DivideMix Repos, and please change the name of folder.
 
 ### Issues
 Environment settings.
