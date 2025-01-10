@@ -3,7 +3,7 @@ import torch
 import copy
 import random
 import json
-from data.utils import download_url, check_integrity
+# from data.utils import download_url, check_integrity
 from utils.randaug import *
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
@@ -117,7 +117,7 @@ class cifarn_dataset(Dataset):
                     noise_label = train_noisy_labels
                 
 
-            if self.mode == 'all_lab':
+            if self.mode == 'all_lab': # TODO: what's the probabilities?
                 self.probability = probability
                 self.probability2 = probability2
                 self.train_data = train_data
@@ -264,12 +264,21 @@ class cifarn_dataloader():
             # never show noisy rate again
             return trainloader, all_dataset.train_noisy_labels
 
-        elif mode == 'train':
-            labeled_dataset = cifarn_dataset(dataset=self.dataset, noise_type=self.noise_type,
-                                             noise_path=self.noise_path, is_human=self.is_human,
-                                             root_dir=self.root_dir, transform=self.transform_train, mode="all_lab",
-                                             noise_file=self.noise_file, pred=pred, probability=prob,probability2=prob2, log=self.log,
-                                             transform_s=self.transform_train_s, r=self.r,noise_mode=self.noise_mode)
+        elif mode == 'train': # the data that is used for training. loader.run('train', pred1, prob1, prob2)  # co-divide
+            labeled_dataset = cifarn_dataset(dataset=self.dataset, 
+                                             noise_type=self.noise_type,
+                                             noise_path=self.noise_path, 
+                                             is_human=self.is_human,
+                                             root_dir=self.root_dir, 
+                                             transform=self.transform_train, 
+                                             mode="all_lab",
+                                             noise_file=self.noise_file, 
+                                             pred=pred, 
+                                             probability=prob,
+                                             probability2=prob2, 
+                                             log=self.log,
+                                             transform_s=self.transform_train_s, 
+                                             r=self.r,noise_mode=self.noise_mode)
             labeled_trainloader = DataLoader(
                 dataset=labeled_dataset,
                 batch_size=self.batch_size,

@@ -16,7 +16,7 @@ class DualNet(nn.Module):
     def forward(self,x):
         outputs_1 = self.net1(x)
         outputs_2 = self.net2(x)
-        outputs_mean = (outputs_1 + outputs_2)/2
+        outputs_mean = (outputs_1 + outputs_2)/2  # mean of two outputs
         return outputs_mean
 
 
