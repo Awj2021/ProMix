@@ -16,6 +16,7 @@ from utils.fmix import *
 from sklearn.mixture import GaussianMixture
 from datetime import datetime
 import wandb
+import ipdb
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR Training')
 parser.add_argument('--batch_size', default=256, type=int, help='train batchsize')
@@ -23,8 +24,8 @@ parser.add_argument('--lr', '--learning_rate', default=0.05, type=float, help='i
 parser.add_argument('-lr_decay_rate', type=float, default=0.1, help='decay rate for learning rate')
 parser.add_argument('--cosine', action='store_true', default=False,
                     help='use cosine lr schedule')
-parser.add_argument('--noise_type', type=str, help='clean, aggre, worst, rand1, rand2, rand3, clean100, noisy100',
-                    default='clean')
+parser.add_argument('--noise_type', type=str, help='clean, aggre, worst, rand1, rand2, \
+                    rand3, clean100, noisy100, multi_cifar100', default='clean')
 parser.add_argument('--noise_path', type=str, help='path of CIFAR-10_human.pt', default=None)
 parser.add_argument('--p_threshold', default=0.5, type=float, help='clean probability threshold')
 parser.add_argument('--T', default=0.5, type=float, help='sharpening temperature')
@@ -49,12 +50,14 @@ parser.add_argument('--debias_output', default=0.8, type=float,
                     help='debias strength for loss calculation')
 parser.add_argument('--debias_pl', default=0.8, type=float,
                     help='debias strength for pseudo-label generation')
-parser.add_argument('--noise_mode', default='cifarn', type=str,help='cifarn, sym, asym')
+parser.add_argument('--noise_mode', default='cifarn', type=str,help='cifarn, sym, asym, multi_cifar100') # TODO: please check this parameters.
 parser.add_argument('--noise_rate', default=0.2, type=float,
                     help='noise rate for synthetic noise')
 parser.add_argument('--bias_m', default=0.9999, type=float,
                     help='moving average parameter of bias estimation')
+parser.add_argument('--num_annotators', default=6, type=int, help='number of annotators')                    
 parser.add_argument('--wandb', action='store_true', help='use wandb to log the training process.')
+parser.add_argument('--project_name', default='promix_first_try', type=str, help='wandb project name')
 
 args = parser.parse_args()
 [args.rho_start, args.rho_end] = [float(item) for item in args.rho_range.split(',')] # 0.2 and 0.6
@@ -68,32 +71,55 @@ torch.cuda.manual_seed_all(args.seed)
 # Hyper Parameters
 noise_type_map = {'clean': 'clean_label', 'worst': 'worse_label', 'aggre': 'aggre_label', 'rand1': 'random_label1',
                   'rand2': 'random_label2', 'rand3': 'random_label3', 'clean100': 'clean_label',
-                  'noisy100': 'noisy_label'}
+                  'noisy100': 'noisy_label', 'multi_cifar100': 'multi_cifar100'}
 
-args.noise_type = noise_type_map[args.noise_type]
+if args.num_annotators == 2:
+    annotators = ['random_label1', 'random_label2']
+elif args.num_annotators == 3:
+    annotators = ['random_label1', 'random_label2', 'random_label3']
+elif args.num_annotators == 4:
+    annotators = ['random_label1', 'random_label2', 'random_label3', 'random_label4']
+elif args.num_annotators == 5:
+    annotators = ['random_label1', 'random_label2', 'random_label3', 'random_label4', 'random_label5']
+elif args.num_annotators == 6:
+    annotators = ['random_label1', 'random_label2', 'random_label3', 'random_label4', 'random_label5', 'random_label6']
+else:
+    raise ValueError('The annotator should be specified {}.'.format(args.num_annotators))
+
+args.noise_type = noise_type_map[args.noise_type] # same as the annotator. But I need to modify the code here.
+
 if args.wandb:
-    running_name = args.dataset + '_' + args.noise_type + '_' + 'baseline'
-    wandb.init(project='promix_test', name=running_name, config=args)
+    running_name = 'random_' + args.dataset + '_' + args.noise_type + '_' + str(args.num_annotators)
+    wandb.init(project=args.project_name, name=running_name, config=args)
 
 # load dataset
 # please change it to your own datapath
 if args.data_path is None:
     if args.dataset == 'cifar10':
         args.data_path = './cifar-10-batches-py'
-    elif args.dataset == 'cifar100':
+    elif args.dataset == 'cifar100' or args.dataset == 'cifar100_IDN30' or args.dataset == 'cifar100_IDN50' or args.dataset == 'cifar100_IDN70':
         args.data_path = './cifar-100-pyhton'
     else:
         pass
+
 # please change it to your own datapath for CIFAR-N
-if args.noise_path is None:
-    if args.dataset == 'cifar10':
-        args.noise_path = './cifar-10-batches-py/CIFAR-10_human.pt'
-    elif args.dataset == 'cifar100':
-        args.noise_path = './cifar-100-pyhton/CIFAR-100_human.pt'
-    else:
-        pass
-    
-# TODO: what's the function below?
+if args.dataset == 'cifar10':
+    args.noise_path = './cifar-10-batches-py/CIFAR-10_human.pt'
+elif args.dataset == 'cifar100':
+    args.noise_path = 'cifar-100-pyhton/CIFAR-100_human.pt'
+elif args.dataset == 'cifar100_IDN30': # cifar-100-python/cifar100_noisy_labels_noise_30.pt
+    args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_30.pt'
+elif args.dataset == 'cifar100_IDN50':
+    args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_30.pt'
+elif args.dataset == 'cifar100_IDN70':
+    args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_70.pt'
+else:
+    pass
+
+save_dir = os.path.join('./checkpoint', running_name)
+if not os.path.exists(save_dir):
+    os.makedirs(save_dir)
+
 def label_guessing(idx_chosen, w_x, batch_size, score1, score2, match):
     w_x2 = w_x.clone()
     # when clean data is insufficient, try to incorporate more examples
@@ -116,9 +142,11 @@ def label_guessing(idx_chosen, w_x, batch_size, score1, score2, match):
     return w_x2
 
 # Training
-def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel, pi2_unrel):
+def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel, pi2_unrel, no_annotator): 
+    # TODO: As the optimizers are seperated, we could train the two networks seperately.
+    # If you want to modify the code, please read the paper carefully.
     net.train()
-    net2.train()  # train two peer networks in parallel
+    net2.eval()
     
     #selection ratio for CSS
     rho = args.rho_start + (args.rho_end - args.rho_start) * linear_rampup2(epoch, args.warmup_ep) # the ratio is not be used.
@@ -130,6 +158,8 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
     num_iter = (len(labeled_trainloader.dataset) // args.batch_size) + 1
     
     for batch_idx, (inputs_x, inputs_x2, labels_x, w_x, w_x2, true_labels, index) in enumerate(labeled_trainloader):
+        # TODO: check the data of the labeled_trainloader.
+        # ipdb.set_trace()
         batch_size = inputs_x.size(0)
 
         # Transform label to one-hot
@@ -140,10 +170,12 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
         # inputs_x: weak augmentation
         # inputs_x2: strong augmentation
         inputs_x, inputs_x2, labels_x, w_x , w_x2= inputs_x.cuda(), inputs_x2.cuda(), labels_x.cuda(), w_x.cuda(), w_x2.cuda()
+        # For the train, the net return: out_linear, out_linear_debias, F.normalize(feat_c, dim=1)
+        # For the test, the net return: out_linear, out_linear_debias
         outputs_x, outputs_x_ph, _ = net(inputs_x,train=True,use_ph=True)
         outputs_x2, outputs_x2_ph, _ = net(inputs_x2,train=True,use_ph=True)
-        outputs_a, outputs_a_ph, _ = net2(inputs_x,train=True,use_ph=True)
-        outputs_a2, outputs_a2_ph, _ = net2(inputs_x2,train=True,use_ph=True)
+        outputs_a, outputs_a_ph = net2(inputs_x,train=False,use_ph=True)
+        outputs_a2, outputs_a2_ph= net2(inputs_x2,train=False,use_ph=True)
         outputs_x_ori = outputs_x.clone().detach()
         outputs_a_ori = outputs_a.clone().detach()
         
@@ -203,6 +235,7 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
                 match = px.max(dim=1)[1] == px2.max(dim=1)[1]
                 hc2_sel_wx1 = label_guessing(idx_chosen, w_x, batch_size, score1, score2, match)
                 hc2_sel_wx2 = label_guessing(idx_chosen_2, w_x2, batch_size, score1, score2, match)
+                # ipdb.set_trace()
                 idx_chosen = torch.where(hc2_sel_wx1 == 1)[0]
                 idx_chosen_2 = torch.where(hc2_sel_wx2 == 1)[0]
                 idx_unchosen = torch.where(hc2_sel_wx1 != 1)[0]
@@ -270,106 +303,105 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
 
         #-----Below: loss for net2, similar to net1-----
         
-        # mixup loss for primary head of Net 2
-        l = np.random.beta(4, 4)
-        l = max(l, 1-l)
-        X_w_c = inputs_x[idx_chosen_2]
-        pseudo_label_c = pseudo_label_l2[idx_chosen_2]
-        idx = torch.randperm(X_w_c.size(0))
-        X_w_c_rand = X_w_c[idx]
-        pseudo_label_c_rand = pseudo_label_c[idx]
-        X_w_c_mix2 = l * X_w_c + (1 - l) * X_w_c_rand        
-        pseudo_label_c_mix2 = l * pseudo_label_c + (1 - l) * pseudo_label_c_rand
-        logits_mix2 = net2(X_w_c_mix2)
-        logits_mix2 = debias_output(logits_mix2,pi2,alpha_output)
-        loss_mix2 = CEsoft(logits_mix2, targets=pseudo_label_c_mix2).mean()
-        x_fmix2 = fmix(X_w_c)
-        logits_fmix2 = net2(x_fmix2)
-        logits_fmix2 = debias_output(logits_fmix2,pi2,alpha_output)
-        loss_fmix2 = fmix.loss(logits_fmix2, (pseudo_label_c.detach()).long())
+        ####  mixup loss for primary head of Net 2
+        # l = np.random.beta(4, 4)
+        # l = max(l, 1-l)
+        # X_w_c = inputs_x[idx_chosen_2]
+        # pseudo_label_c = pseudo_label_l2[idx_chosen_2]
+        # idx = torch.randperm(X_w_c.size(0))
+        # X_w_c_rand = X_w_c[idx]
+        # pseudo_label_c_rand = pseudo_label_c[idx]
+        # X_w_c_mix2 = l * X_w_c + (1 - l) * X_w_c_rand        
+        # pseudo_label_c_mix2 = l * pseudo_label_c + (1 - l) * pseudo_label_c_rand
+        # logits_mix2 = net2(X_w_c_mix2)
+        # logits_mix2 = debias_output(logits_mix2,pi2,alpha_output)
+        # loss_mix2 = CEsoft(logits_mix2, targets=pseudo_label_c_mix2).mean()
+        # x_fmix2 = fmix(X_w_c)
+        # logits_fmix2 = net2(x_fmix2)
+        # logits_fmix2 = debias_output(logits_fmix2,pi2,alpha_output)
+        # loss_fmix2 = fmix.loss(logits_fmix2, (pseudo_label_c.detach()).long())
 
-        # mixup loss for pseudo head of Net 2
-        l = np.random.beta(4, 4)
-        l = max(l, 1-l)
-        X_w_c_ph = inputs_x[idx_chosen_2]
-        pseudo_label_c = pseudo_label_l2[idx_chosen_2]
-        idx = torch.randperm(X_w_c_ph.size(0))
-        X_w_c_rand_ph = X_w_c_ph[idx]
-        pseudo_label_c_rand = pseudo_label_c[idx]
-        X_w_c_mix2_ph = l * X_w_c_ph + (1 - l) * X_w_c_rand_ph        
-        pseudo_label_c_mix2 = l * pseudo_label_c + (1 - l) * pseudo_label_c_rand
-        _,logits_mix2_ph = net2(X_w_c_mix2_ph,use_ph=True)
-        logits_mix2_ph = debias_output(logits_mix2_ph,pi2,alpha_output)
-        loss_mix2_ph = CEsoft(logits_mix2_ph, targets=pseudo_label_c_mix2).mean()
-        x_fmix2_ph = fmix(X_w_c_ph)
-        _,logits_fmix2_ph = net2(x_fmix2_ph,use_ph=True)
-        logits_fmix2_ph = debias_output(logits_fmix2_ph,pi2,alpha_output)
-        loss_fmix2_ph = fmix.loss(logits_fmix2_ph, (pseudo_label_c.detach()).long())
+        ###  mixup loss for pseudo head of Net 2
+        # l = np.random.beta(4, 4)
+        # l = max(l, 1-l)
+        # X_w_c_ph = inputs_x[idx_chosen_2]
+        # pseudo_label_c = pseudo_label_l2[idx_chosen_2]
+        # idx = torch.randperm(X_w_c_ph.size(0))
+        # X_w_c_rand_ph = X_w_c_ph[idx]
+        # pseudo_label_c_rand = pseudo_label_c[idx]
+        # X_w_c_mix2_ph = l * X_w_c_ph + (1 - l) * X_w_c_rand_ph        
+        # pseudo_label_c_mix2 = l * pseudo_label_c + (1 - l) * pseudo_label_c_rand
+        # _,logits_mix2_ph = net2(X_w_c_mix2_ph,use_ph=True)
+        # logits_mix2_ph = debias_output(logits_mix2_ph,pi2,alpha_output)
+        # loss_mix2_ph = CEsoft(logits_mix2_ph, targets=pseudo_label_c_mix2).mean()
+        # x_fmix2_ph = fmix(X_w_c_ph)
+        # _,logits_fmix2_ph = net2(x_fmix2_ph,use_ph=True)
+        # logits_fmix2_ph = debias_output(logits_fmix2_ph,pi2,alpha_output)
+        # loss_fmix2_ph = fmix.loss(logits_fmix2_ph, (pseudo_label_c.detach()).long())
 
         # consistency loss for primary head and pseudo head
-        loss_cr2 = CEsoft(outputs_a2[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
-        loss_cr2_ph = CEsoft(outputs_a2_ph[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
-        # cross entropy loss for primary head and pseudo head
-        loss_ce2 = CEsoft(outputs_a[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
-        loss_ce2_ph = CEsoft(outputs_a_ph[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
-        loss_net2 = loss_ce2 + w * (loss_cr2 + loss_mix2 + loss_fmix2)
+        # loss_cr2 = CEsoft(outputs_a2[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
+        # loss_cr2_ph = CEsoft(outputs_a2_ph[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
+        # # cross entropy loss for primary head and pseudo head
+        # loss_ce2 = CEsoft(outputs_a[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
+        # loss_ce2_ph = CEsoft(outputs_a_ph[idx_chosen_2], targets=pseudo_label_l2[idx_chosen_2]).mean()
+        # loss_net2 = loss_ce2 + w * (loss_cr2 + loss_mix2 + loss_fmix2)
         # Above: loss for net2-primary head
 
         # unrel loss for reliable samples on the pseudo head 
-        ptx2 = debias_px2_unrel  ** (1 / args.T)
-        ptx2 = ptx2 / ptx2.sum(dim=1, keepdim=True)
-        targets_urel2 = ptx2
-        loss_unrel2_ph = CEsoft(outputs_a_unrel_ph[idx_unchosen_2], targets=targets_urel2[idx_unchosen_2]).mean()\
-                  + w * CEsoft(outputs_a2_unrel_ph[idx_unchosen_2], targets=targets_urel2[idx_unchosen_2]).mean()
+        # ptx2 = debias_px2_unrel  ** (1 / args.T)
+        # ptx2 = ptx2 / ptx2.sum(dim=1, keepdim=True)
+        # targets_urel2 = ptx2
+        # loss_unrel2_ph = CEsoft(outputs_a_unrel_ph[idx_unchosen_2], targets=targets_urel2[idx_unchosen_2]).mean()\
+        #           + w * CEsoft(outputs_a2_unrel_ph[idx_unchosen_2], targets=targets_urel2[idx_unchosen_2]).mean()
         #loss for net2-pseudo head
-        loss_net2_ph = beta * loss_unrel2_ph + loss_ce2_ph + w * (loss_cr2_ph + loss_mix2_ph + loss_fmix2_ph)
-        # 
+        # loss_net2_ph = beta * loss_unrel2_ph + loss_ce2_ph + w * (loss_cr2_ph + loss_mix2_ph + loss_fmix2_ph)
         
         # total loss
-        loss = loss_net1 + loss_net2 + loss_net1_ph + loss_net2_ph
+        # loss = loss_net1 + loss_net2 + loss_net1_ph + loss_net2_ph
+        loss = loss_net1 + loss_net1_ph
         # moving average estimation of bias for D_l and D_u seperately
         pi1 = bias_update(px[idx_chosen], pi1, args.bias_m)
-        pi2 = bias_update(px2[idx_chosen_2], pi2, args.bias_m)
         pi1_unrel = bias_update(px[idx_unchosen], pi1_unrel, args.bias_m)
-        pi2_unrel = bias_update(px2[idx_unchosen_2], pi2_unrel, args.bias_m)
+        # pi2 = bias_update(px2[idx_chosen_2], pi2, args.bias_m) # since the pi2 will be updated in the training of net2.
+        # pi2_unrel = bias_update(px2[idx_unchosen_2], pi2_unrel, args.bias_m)
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         if batch_idx % 100 == 0 :
-            print('%s:%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t Net1 loss: %.2f  Net2 loss: %.2f'
-                         % (args.dataset, args.noise_type, epoch, args.num_epochs, batch_idx + 1, num_iter,
-                            loss_net1.item(), loss_net2.item()))
+            print('%s:%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t Net {%d} Loss: %.2f'
+                         % (args.dataset, args.noise_type, epoch, args.num_epochs, batch_idx + 1, num_iter, no_annotator,
+                            loss_net1.item()))
+            stats_log.write('%s:%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t Net {%d} Loss: %.2f\n'
+                         % (args.dataset, args.noise_type, epoch, args.num_epochs, batch_idx + 1, num_iter, no_annotator,
+                            loss_net1.item()))
+            stats_log.flush()
+            wandb.log({'Net{} Loss'.format(no_annotator): loss_net1.item()}) if args.wandb else None
 
-    return pi1,pi2,pi1_unrel,pi2_unrel
+    return pi1, pi2, pi1_unrel, pi2_unrel
 
 
-def warmup(epoch, net, net2, optimizer, dataloader): # two networks.
+def warmup(epoch, net, optimizer, dataloader, annotator): # just warmup one network.
+    # 1. we could average the outputs of several networks to get the final prediction.
+    # TODO: 2. we could train the network with different data and backward seperately.
     net.train()
-    net2.train()
     num_iter = (len(dataloader.dataset) // dataloader.batch_size) + 1
     for batch_idx, (inputs_w, inputs_s, labels, _) in enumerate(dataloader): # TODO: what's the inputs?
         inputs_w, inputs_s, labels = inputs_w.cuda(), inputs_s.cuda(), labels.cuda()
         optimizer.zero_grad()
         outputs = net(inputs_w)
-        outputs2 = net2(inputs_w)
         l_ce = CEloss(outputs, labels)
-        l_ce2 = CEloss(outputs2, labels)
-        loss = l_ce + l_ce2
-        penalty = conf_penalty(outputs) + conf_penalty(outputs2)
-        if args.noise_mode=='asym': 
-            L = loss + penalty
-        else:
-            L = loss
+        loss = l_ce
+        L = loss
         L.backward()
         optimizer.step()
-
         if batch_idx % 100 == 0:
-            print('%s:%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t CE-loss: %.4f  Penalty-loss: %.4f  All-loss: %.4f'
+            print('%s:%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t Net: %d CE-loss: %.4f All-loss: %.4f'
                          % (
-                         args.dataset, args.noise_type, epoch, args.num_epochs, batch_idx + 1, num_iter,loss.item(),penalty.item(), L.item()))
-            wandb.log({'CE-loss': l_ce.item(), 'Penalty-loss': penalty.item(), 'All-loss': L.item()})
+                         args.dataset, args.noise_type, epoch, args.num_epochs, batch_idx + 1, num_iter, annotator, loss.item(), L.item()))
+            wandb.log({'CE-loss': l_ce.item()}) if args.wandb else None
 
 def evaluate(loader, model, save = False, best_acc = 0.0):
     model.eval()    # Change model to 'eval' mode.
@@ -396,38 +428,46 @@ def evaluate(loader, model, save = False, best_acc = 0.0):
             print(f'model saved to {save_path}!')
     return acc
 
-def test(epoch, net1, net2):
-    net1.eval()
-    net2.eval()
-    correct = 0
-    correct2 = 0
-    correctmean = 0
+def test(epoch, nets):  # Test all the networks together.
+    # somethings were wrong here. Please check it carefully.
+    nets = [net.eval() for net in nets]
+    correct = [0] * len(nets) # You could use the numpy array to store the correct number.
     correctmean_ori = 0
     total = 0
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(test_loader):
             inputs, targets = inputs.cuda(), targets.cuda()
-            outputs1_ori,outputs1 = net1(inputs,use_ph=True)
-            outputs2_ori,outputs2 = net2(inputs,use_ph=True)
-            score1, predicted = torch.max(outputs1, 1)
-            score2, predicted_2 = torch.max(outputs2, 1)
-            #model ensemble for inference
-            outputs_mean_ori = (outputs1_ori + outputs2_ori) / 2
+            # ipdb.set_trace()
+            outputs_oris_outputs = [net.net(inputs, use_ph=True) for net in nets] # outputs_ori and outputs. out_linear, out_linear_debias
+            scores_and_preds = [torch.max(outputs, 1) for _, outputs in outputs_oris_outputs]
+            # model ensemble for inference
+            # outputs_mean_ori = (outputs1_ori + outputs2_ori) / 2 
+            # TODO: whether we should use the softmax function here?
+            outputs_mean_ori =  sum([outputs_oris_outputs[i][0] for i in range(len(nets))]) / len(nets)
             _, predicted_mean_ori = torch.max(outputs_mean_ori, 1)
             total += targets.size(0)
-            correct += predicted.eq(targets).cpu().sum().item()
-            correct2 += predicted_2.eq(targets).cpu().sum().item()
+            # ipdb.set_trace()
+            correct = [x + predicted[1].eq(targets).cpu().sum().item() for x, predicted in zip(correct, scores_and_preds)]
+            print(correct)
+            
             correctmean_ori += predicted_mean_ori.eq(targets).cpu().sum().item()
-    acc = 100. * correct / total
-    acc2 = 100. * correct2 / total
-    accmean_ori = 100. * correctmean_ori / total
-    print("| Test Epoch #%d\t Acc Net1: %.2f%%, Acc Net2: %.2f%% Acc Mean: %.2f%%\n" % (epoch, acc, acc2,  accmean_ori))
-    wandb.log({'Test Acc Net1': acc, 'Test Acc Net2': acc2, 'Test Acc Mean': accmean_ori})
-    test_log.write('Epoch:%d   Accuracy:%.2f\n' % (epoch, acc))
+    # print(correct)
+    # print(total)
+    acc_seperate = [100. * x / total for x in correct] # the accaracy cannot be beyond 1.
+    # print(acc_seperate)
+    acc_mean_ori = 100. * correctmean_ori / total
+    # print(acc_mean_ori)
+
+    wandb_log_dict = {f'Test Acc Net{i}': acc for i, acc in enumerate(acc_seperate)} # somethings wrong here.
+    wandb_log_dict['Test Acc Mean'] = acc_mean_ori
+    print(wandb_log_dict)
+    wandb.log(wandb_log_dict) if args.wandb else None
+    test_log.write('Epoch:%d   Accuracy:%.2f\n' % (epoch, acc_mean_ori)) # FIXME: IMPORTANT: please don't delete this line.
     test_log.flush()
+    return acc_mean_ori
 
 
-def eval_train(model, all_loss, rho, num_class):
+def eval_train(model, all_loss, rho, num_class, eval_loader):
     w = linear_rampup2(epoch, args.warmup_ep)
     model.eval()
     losses = torch.zeros(50000)
@@ -435,7 +475,7 @@ def eval_train(model, all_loss, rho, num_class):
     prediction_list = torch.zeros(50000)
     num_class = 0
     with torch.no_grad():
-        for batch_idx, (inputs, targets, index) in enumerate(eval_loader):
+        for batch_idx, (inputs, targets, index) in enumerate(eval_loader): # TODO: the eval_loader should be changed.
             inputs, targets = inputs.cuda(), targets.cuda()
             outputs = model(inputs)
             num_class = outputs.shape[1]
@@ -447,8 +487,8 @@ def eval_train(model, all_loss, rho, num_class):
                 
     #class-wise small-loss selection (CSS for base selection set)
     losses = (losses - losses.min()) / (losses.max() - losses.min())
-    all_loss.append(losses)
-    input_loss = losses.reshape(-1, 1)
+    all_loss.append(losses) # TODO: what's the aim of the all_loss?
+    input_loss = losses.reshape(-1, 1) # it doesn't be used.
     prob = np.zeros(targets_list.shape[0])
     idx_chosen_sm = []
     min_len = 1e10
@@ -473,61 +513,89 @@ class NegEntropy(object):
         return torch.mean(torch.sum(probs.log() * probs, dim=1))
 
 def create_model():
-    model = DualNet(args.num_class)
+    model = MultiNet(args.num_class)  # here the model is a list of networks.
     model = model.cuda()
     return model
 
 
-stats_log = open('./checkpoint/%s_%s_%s' % (args.dataset, args.noise_type, args.num_epochs) + '_stats.txt', 'w')
-test_log = open('./checkpoint/%s_%s_%s' % (args.dataset, args.noise_type, args.num_epochs) + '_acc.txt', 'w')
+stats_log = open(os.path.join(save_dir, '%s_%s_%s_anno_%ss' % (args.dataset, args.noise_type, args.num_epochs, args.num_annotators) + '_stats.txt'), 'w')
+test_log = open(os.path.join(save_dir, '%s_%s_%s_anno_%ss' % (args.dataset, args.noise_type, args.num_epochs, args.num_annotators) + '_acc.txt'), 'w')
 
 warm_up = args.pretrain_ep
 #unique file name to record the synthetic noise for CIFAR-10/100
 time = str(datetime.now())[-6:]
-loader = dataloader.cifarn_dataloader(args.dataset, noise_type=args.noise_type, noise_path=args.noise_path,
-                                      is_human=args.is_human, batch_size=args.batch_size, num_workers=8, \
-                                      root_dir=args.data_path, log=stats_log,
-                                      noise_file='%s/noise_file/%s_%s.json' % (args.data_path,args.noise_type,time),
-                                      r = args.noise_rate , noise_mode = args.noise_mode)
+loader = dataloader.cifarn_dataloader(args.dataset, 
+                                      noise_type=args.noise_type, 
+                                      noise_path=args.noise_path,
+                                      is_human=args.is_human, 
+                                      batch_size=args.batch_size, 
+                                      num_workers=8,
+                                      root_dir=args.data_path,
+                                      log=stats_log,
+                                      noise_file=args.noise_path,
+                                      r = args.noise_rate,
+                                      noise_mode = args.noise_mode)
 
 print('| Building net')
-dualnet = create_model() # Create a dual network.
+# multinet = create_model() # Create a multi-network.
+multinet = [create_model() for _ in range(args.num_annotators)]
 cudnn.benchmark = True
 
 conf_penalty = NegEntropy()
-optimizer1 = optim.SGD([{'params': dualnet.net1.parameters()},
-                        {'params': dualnet.net2.parameters()}
-                        ], lr=args.lr, momentum=0.9, weight_decay=5e-4)
+optimizers = [optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4) for net in multinet]
 
 fmix = FMix()
 CE = nn.CrossEntropyLoss(reduction='none')
 CEloss = nn.CrossEntropyLoss()
 CEsoft = CE_Soft_Label()
-eval_loader, noise_or_not = loader.run('eval_train') # noise_or_not is a list of noisy labels.
+
+eval_loaders = [loader.run('eval_train', annotator=annotators[i]) for i in range(len(annotators))]
 test_loader = loader.run('test')
+if not os.path.exists(args.project_name):
+    os.makedirs(args.project_name)
 
 all_loss = [[], []]  
 
 best_acc = 0
-#uniform initialization of distribution estimation
-pi1 = bias_initial(args.num_class) # at the beginning, the bias is uniform.
-pi2 = bias_initial(args.num_class)
-pi1_unrel = bias_initial(args.num_class)
-pi2_unrel = bias_initial(args.num_class)
+
+pi_list = [bias_initial(args.num_class) for _ in range(args.num_annotators)]
+pi_unrel_list = [bias_initial(args.num_class) for _ in range(args.num_annotators)]
+
+# ipdb.set_trace()
+
 
 for epoch in range(args.num_epochs + 1):
-    adjust_learning_rate(args, optimizer1, epoch)
+    for optimizer in optimizers:
+        adjust_learning_rate(args, optimizer, epoch)
     if epoch < warm_up:
-        warmup_trainloader, noisy_labels = loader.run('warmup')
-        print('Warmup Net1')
-        warmup(epoch, dualnet.net1, dualnet.net2, optimizer1, warmup_trainloader)
+        # first solution, warm each network seperately.
+        # ipdb.set_trace()
+        warmup_trainloaders = [loader.run('warmup', annotator=annotator) for annotator in annotators] # warmup_trainloaders is a list of dataloaders and noisy_labels.
+        for i, (net, optimizer, warmup_trainloader) in enumerate(zip(multinet, optimizers, warmup_trainloaders)):
+            warmup(epoch, net, optimizer, warmup_trainloader, i)
+        # TODO: second solution, warm networks together and get the average of the outputs.
     else:
-        rho = args.rho_start + (args.rho_end - args.rho_start) * linear_rampup2(epoch, args.warmup_ep) # TODO: watch this value.
-        prob1, all_loss[0] = eval_train(dualnet.net1, all_loss[0], rho, args.num_class)
-        prob2, all_loss[0] = eval_train(dualnet.net2, all_loss[0], rho, args.num_class)  # actually, the rho is set by default.
-        pred1 = (prob1 > args.p_threshold)
-        # TODO: the code should be modified here.
-        total_trainloader, noisy_labels = loader.run('train', pred1, prob1, prob2)  # co-divide
-        pi1,pi2,pi1_unrel,pi2_unrel = train(epoch,dualnet.net1, dualnet.net2, optimizer1, total_trainloader,pi1,pi2,pi1_unrel,pi2_unrel) # pi1,pi2,pi1_unrel,pi2_unrel are the parameters of the bias estimation. 
-    test(epoch, dualnet.net1, dualnet.net2)
-    torch.save(dualnet, f"./{args.dataset}_{args.noise_type}best.pth.tar")
+        rho = args.rho_start + (args.rho_end - args.rho_start) * linear_rampup2(epoch, args.warmup_ep) # watch this value.
+        wandb.log({'rho': rho}) if args.wandb else None
+        for i in range(args.num_annotators):
+            model_choices = list(range(args.num_annotators))
+            model_choices.remove(i)
+            model_choice = random.choice(model_choices)
+
+            ##### At one loop, we randomly choose one network to cooperate with the seleted network.
+            prob1, all_loss[0] = eval_train(multinet[i].net, all_loss[0], rho, args.num_class, eval_loader=eval_loaders[i]) 
+            # what's the aim of the all_loss?
+            prob2, all_loss[0] = eval_train(multinet[model_choice].net, all_loss[0], rho, args.num_class, eval_loader=eval_loaders[i])  
+            pred1 = (prob1 > args.p_threshold)
+            # why the prob1 and prob2 are all used? Just follow the Promix paper, and then we could get the answer.
+            total_trainloader = loader.run('train', pred1, prob1, prob2, annotator=annotators[i])  # co-divide
+            pi_list[i],pi_list[model_choice], pi_unrel_list[i], pi_unrel_list[model_choice] = train(epoch, multinet[i].net, \
+                multinet[model_choice].net, optimizers[i], total_trainloader, pi_list[i], pi_unrel_list[i], pi_list[model_choice], \
+                    pi_unrel_list[model_choice],no_annotator=i) 
+            # pi1,pi2,pi1_unrel,pi2_unrel are the parameters of the bias estimation. And each network should have 
+            # the corresponding bias estimation. (pi_i, pi_i_unrel)
+            
+    acc = test(epoch, multinet)
+    if acc > best_acc:
+        best_acc = acc
+        torch.save(multinet, os.path.join(save_dir, 'best.pth.tar'))

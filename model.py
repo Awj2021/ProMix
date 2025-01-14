@@ -7,17 +7,17 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 
 
-class DualNet(nn.Module):
+class MultiNet(nn.Module):
     def __init__(self, num_class):
         super().__init__()
-        self.net1 = ResNet18(num_classes=num_class)
-        self.net2 = ResNet18(num_classes=num_class)
+        self.net = ResNet18(num_classes=num_class)
+        # self.net2 = ResNet18(num_classes=num_class)
 
     def forward(self,x):
-        outputs_1 = self.net1(x)
-        outputs_2 = self.net2(x)
-        outputs_mean = (outputs_1 + outputs_2)/2  # mean of two outputs
-        return outputs_mean
+        outputs = self.net(x)
+        # outputs_2 = self.net2(x)
+        # outputs_mean = (outputs_1 + outputs_2)/2  # mean of two outputs
+        return outputs
 
 
 class BasicBlock(nn.Module):
@@ -172,7 +172,7 @@ class ResNet(nn.Module):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
-    def forward(self, x, train=False,use_ph=False):
+    def forward(self, x, train=False, use_ph=False):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
