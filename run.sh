@@ -22,6 +22,6 @@
 #python Train_promix.py --noise_type noisy100 --cosine --dataset cifar100 --num_class 100 --rho_range 0.5,0.5 --tau 0.95 --pretrain_ep 30 --debias_output 0.5 --debias_pl 0.5 --noise_mode cifarn
 
 # For MULTI-CIFAR100N, what's the difference between noise_type and noise_mode?
-CUDA_VISIBLE_DEVICES=1 python Train_promix.py --noise_type multi_cifar100 --data_path ./cifar-100-python --cosine --dataset cifar100_IDN70 \
+CUDA_VISIBLE_DEVICES=0 python Train_promix.py --noise_type multi_cifar100 --data_path ./cifar-100-python --cosine --dataset cifar100_IDN70 \
     --num_class 100 --rho_range 0.5,0.5 --tau 0.95 --pretrain_ep 30 --debias_output 0.5 --debias_pl 0.5 \
     --noise_mode multi_cifar100 --num_annotators 6 --wandb

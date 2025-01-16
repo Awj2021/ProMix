@@ -88,8 +88,9 @@ else:
 
 args.noise_type = noise_type_map[args.noise_type] # same as the annotator. But I need to modify the code here.
 
+running_name = 'random_' + args.dataset + '_' + args.noise_type + '_' + str(args.num_annotators)
+
 if args.wandb:
-    running_name = 'random_' + args.dataset + '_' + args.noise_type + '_' + str(args.num_annotators)
     wandb.init(project=args.project_name, name=running_name, config=args)
 
 # load dataset
@@ -433,6 +434,8 @@ def test(epoch, nets):  # Test all the networks together.
     nets = [net.eval() for net in nets]
     correct = [0] * len(nets) # You could use the numpy array to store the correct number.
     correctmean_ori = 0
+    correctmean_ori_softmax = 0
+
     total = 0
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(test_loader):
@@ -442,27 +445,34 @@ def test(epoch, nets):  # Test all the networks together.
             scores_and_preds = [torch.max(outputs, 1) for _, outputs in outputs_oris_outputs]
             # model ensemble for inference
             # outputs_mean_ori = (outputs1_ori + outputs2_ori) / 2 
-            # TODO: whether we should use the softmax function here?
-            outputs_mean_ori =  sum([outputs_oris_outputs[i][0] for i in range(len(nets))]) / len(nets)
+            # TODO: whether we should use the softmax function here? I think we should use the softmax function here as the DivideMix.
+            # ipdb.set_trace()
+            outputs_mean_ori =  sum(outputs_oris_outputs[i][0] for i in range(len(outputs_oris_outputs))) / len(outputs_oris_outputs)
             _, predicted_mean_ori = torch.max(outputs_mean_ori, 1)
+
+            outputs_mean_ori_softmax =  sum(torch.softmax(outputs_oris_outputs[i][0], 1) for i in range(len(outputs_oris_outputs))) / len(outputs_oris_outputs)
+            _, predicted_mean_ori_softmax = torch.max(outputs_mean_ori_softmax, 1)
             total += targets.size(0)
             # ipdb.set_trace()
             correct = [x + predicted[1].eq(targets).cpu().sum().item() for x, predicted in zip(correct, scores_and_preds)]
             print(correct)
             
             correctmean_ori += predicted_mean_ori.eq(targets).cpu().sum().item()
+            correctmean_ori_softmax += predicted_mean_ori_softmax.eq(targets).cpu().sum().item()
     # print(correct)
     # print(total)
     acc_seperate = [100. * x / total for x in correct] # the accaracy cannot be beyond 1.
     # print(acc_seperate)
     acc_mean_ori = 100. * correctmean_ori / total
+    acc_mean_ori_softmax = 100. * correctmean_ori_softmax / total
     # print(acc_mean_ori)
 
     wandb_log_dict = {f'Test Acc Net{i}': acc for i, acc in enumerate(acc_seperate)} # somethings wrong here.
     wandb_log_dict['Test Acc Mean'] = acc_mean_ori
+    wandb_log_dict['Test Acc Mean Softmax'] = acc_mean_ori_softmax
     print(wandb_log_dict)
     wandb.log(wandb_log_dict) if args.wandb else None
-    test_log.write('Epoch:%d   Accuracy:%.2f\n' % (epoch, acc_mean_ori)) # FIXME: IMPORTANT: please don't delete this line.
+    test_log.write('Epoch:%d   Accuracy_wo_softmax: %.2f  Accuracy_w_softmax: %.2f\n' % (epoch, acc_mean_ori, acc_mean_ori_softmax)) # FIXME: IMPORTANT: please don't delete this line.
     test_log.flush()
     return acc_mean_ori
 
@@ -583,6 +593,7 @@ for epoch in range(args.num_epochs + 1):
             model_choice = random.choice(model_choices)
 
             ##### At one loop, we randomly choose one network to cooperate with the seleted network.
+            # Each epoch, the eval_train just evaluate one network.
             prob1, all_loss[0] = eval_train(multinet[i].net, all_loss[0], rho, args.num_class, eval_loader=eval_loaders[i]) 
             # what's the aim of the all_loss?
             prob2, all_loss[0] = eval_train(multinet[model_choice].net, all_loss[0], rho, args.num_class, eval_loader=eval_loaders[i])  
