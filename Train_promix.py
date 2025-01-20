@@ -15,6 +15,8 @@ from utils.utils import *
 from utils.fmix import *
 from sklearn.mixture import GaussianMixture
 from datetime import datetime
+import wandb
+import ipdb
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR Training')
 parser.add_argument('--batch_size', default=256, type=int, help='train batchsize')
@@ -22,8 +24,8 @@ parser.add_argument('--lr', '--learning_rate', default=0.05, type=float, help='i
 parser.add_argument('-lr_decay_rate', type=float, default=0.1, help='decay rate for learning rate')
 parser.add_argument('--cosine', action='store_true', default=False,
                     help='use cosine lr schedule')
-parser.add_argument('--noise_type', type=str, help='clean, aggre, worst, rand1, rand2, rand3, clean100, noisy100',
-                    default='clean')
+parser.add_argument('--noise_type', type=str, help='clean, aggre, worst, rand1, rand2, \
+                    rand3, clean100, noisy100, multi_cifar100', default='clean')
 parser.add_argument('--noise_path', type=str, help='path of CIFAR-10_human.pt', default=None)
 parser.add_argument('--p_threshold', default=0.5, type=float, help='clean probability threshold')
 parser.add_argument('--T', default=0.5, type=float, help='sharpening temperature')
@@ -31,16 +33,16 @@ parser.add_argument('--num_epochs', default=600, type=int)
 parser.add_argument('--seed', default=123)
 parser.add_argument('--gpuid', default=0, type=int)
 parser.add_argument('--num_class', default=100, type=int)
-parser.add_argument('--data_path', default=None, type=str, help='path to dataset')
+parser.add_argument('--data_path', default=None, type=str, help='path to dataset') # path to CIFAR-10/100 of images.
 parser.add_argument('--dataset', default='cifar10', type=str)
-parser.add_argument('--is_human', action='store_true', default=False)
+parser.add_argument('--is_human', action='store_true', default=False) # Cifar10n or Cifar100n?
 parser.add_argument('--rho_range', default='0.2,0.6', type=str,
                     help='ratio of selecting clean labels (rho)')
 parser.add_argument('--tau', default=0.99, type=float,
                     help='high-confidence selection threshold')
-parser.add_argument('--pretrain_ep', default=10, type=int, help = 'warm-up training epoch')
+parser.add_argument('--pretrain_ep', default=10, type=int, help = 'warm-up training epoch') # TODO: what's the difference between pretrain_ep and warmup_ep?
 parser.add_argument('--warmup_ep', default=50, type=int, help = 'parameter ramp-up epoch')
-parser.add_argument('--low_conf_del', action='store_true', default=False)
+parser.add_argument('--low_conf_del', action='store_true', default=False) # TODO: what's this?
 parser.add_argument('--threshold', default=0.9, type=float, help = 'threshold of label guessing')
 parser.add_argument('--fmix', action='store_true', default=False)
 parser.add_argument('--start_expand', default=250, type=int)               
@@ -48,13 +50,19 @@ parser.add_argument('--debias_output', default=0.8, type=float,
                     help='debias strength for loss calculation')
 parser.add_argument('--debias_pl', default=0.8, type=float,
                     help='debias strength for pseudo-label generation')
-parser.add_argument('--noise_mode', default='cifarn', type=str,help='cifarn, sym, asym')
+parser.add_argument('--noise_mode', default='cifarn', type=str,help='cifarn, sym, asym, multi_cifar100') # TODO: please check this parameters.
 parser.add_argument('--noise_rate', default=0.2, type=float,
                     help='noise rate for synthetic noise')
 parser.add_argument('--bias_m', default=0.9999, type=float,
                     help='moving average parameter of bias estimation')
+# parser.add_argument('--num_annotators', default=6, type=int, help='number of annotators')                    
+parser.add_argument('--no_annotator', default=1, type=int, help='number of annotators') # the No. of annotator. Choosing 1 and 3 for training.
+
+parser.add_argument('--wandb', action='store_true', help='use wandb to log the training process.')
+parser.add_argument('--project_name', default='promix_first_try', type=str, help='wandb project name')
+
 args = parser.parse_args()
-[args.rho_start, args.rho_end] = [float(item) for item in args.rho_range.split(',')]
+[args.rho_start, args.rho_end] = [float(item) for item in args.rho_range.split(',')] # 0.2 and 0.6
 print(args)
 
 torch.cuda.set_device(args.gpuid)
@@ -65,25 +73,42 @@ torch.cuda.manual_seed_all(args.seed)
 # Hyper Parameters
 noise_type_map = {'clean': 'clean_label', 'worst': 'worse_label', 'aggre': 'aggre_label', 'rand1': 'random_label1',
                   'rand2': 'random_label2', 'rand3': 'random_label3', 'clean100': 'clean_label',
-                  'noisy100': 'noisy_label'}
-args.noise_type = noise_type_map[args.noise_type]
+                  'noisy100': 'noisy_label', 'multi_cifar100': 'multi_cifar100'}
+
+args.noise_type = noise_type_map[args.noise_type] # same as the annotator. But I need to modify the code here.
+
+running_name = 'Baseline_IDN_single_annotator_' + args.dataset + '_' + args.noise_type + '_' + str(args.no_annotator)
+
+if args.wandb:
+    wandb.init(project=args.project_name, name=running_name, config=args)
+
 # load dataset
 # please change it to your own datapath
 if args.data_path is None:
     if args.dataset == 'cifar10':
-        args.data_path = './data/cifar-10'
-    elif args.dataset == 'cifar100':
-        args.data_path = './data/cifar-100'
+        args.data_path = './cifar-10-batches-py'
+    elif args.dataset == 'cifar100' or args.dataset == 'cifar100_IDN30' or args.dataset == 'cifar100_IDN50' or args.dataset == 'cifar100_IDN70':
+        args.data_path = './cifar-100-pyhton'
     else:
         pass
+
 # please change it to your own datapath for CIFAR-N
-if args.noise_path is None:
-    if args.dataset == 'cifar10':
-        args.noise_path = './data/CIFAR-10_human.pt'
-    elif args.dataset == 'cifar100':
-        args.noise_path = './data/CIFAR-100_human.pt'
-    else:
-        pass
+if args.dataset == 'cifar10':
+    args.noise_path = './cifar-10-batches-py/CIFAR-10_human.pt'
+elif args.dataset == 'cifar100':
+    args.noise_path = 'cifar-100-pyhton/CIFAR-100_human.pt'
+elif args.dataset == 'cifar100_IDN30': # cifar-100-python/cifar100_noisy_labels_noise_30.pt
+    args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_30.pt'
+elif args.dataset == 'cifar100_IDN50':
+    args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_30.pt'
+elif args.dataset == 'cifar100_IDN70':
+    args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_70.pt'
+else:
+    pass
+
+save_dir = os.path.join('./checkpoint', running_name)
+if not os.path.exists(save_dir):
+    os.makedirs(save_dir)
 
 def label_guessing(idx_chosen, w_x, batch_size, score1, score2, match):
     w_x2 = w_x.clone()
@@ -107,7 +132,7 @@ def label_guessing(idx_chosen, w_x, batch_size, score1, score2, match):
     return w_x2
 
 # Training
-def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel, pi2_unrel):
+def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel, pi2_unrel): 
     net.train()
     net2.train()  # train two peer networks in parallel
     
@@ -131,6 +156,8 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
         # inputs_x: weak augmentation
         # inputs_x2: strong augmentation
         inputs_x, inputs_x2, labels_x, w_x , w_x2= inputs_x.cuda(), inputs_x2.cuda(), labels_x.cuda(), w_x.cuda(), w_x2.cuda()
+        # For the train, the net return: out_linear, out_linear_debias, F.normalize(feat_c, dim=1)
+        # For the test, the net return: out_linear, out_linear_debias
         outputs_x, outputs_x_ph, _ = net(inputs_x,train=True,use_ph=True)
         outputs_x2, outputs_x2_ph, _ = net(inputs_x2,train=True,use_ph=True)
         outputs_a, outputs_a_ph, _ = net2(inputs_x,train=True,use_ph=True)
@@ -336,7 +363,9 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, pi1, pi2, pi1_unrel,
     return pi1,pi2,pi1_unrel,pi2_unrel
 
 
-def warmup(epoch, net, net2, optimizer, dataloader):
+def warmup(epoch, net, net2, optimizer, dataloader): # just warmup one network.
+    # 1. we could average the outputs of several networks to get the final prediction.
+    # TODO: 2. we could train the network with different data and backward seperately.
     net.train()
     net2.train()
     num_iter = (len(dataloader.dataset) // dataloader.batch_size) + 1
@@ -360,6 +389,9 @@ def warmup(epoch, net, net2, optimizer, dataloader):
             print('%s:%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t CE-loss: %.4f  Penalty-loss: %.4f  All-loss: %.4f'
                          % (
                          args.dataset, args.noise_type, epoch, args.num_epochs, batch_idx + 1, num_iter,loss.item(),penalty.item(), L.item()))
+
+
+        wandb.log({'CE-loss': l_ce.item(), 'Penalty-loss': penalty.item(), 'All-loss': L.item()}) if args.wandb else None
 
 def evaluate(loader, model, save = False, best_acc = 0.0):
     model.eval()    # Change model to 'eval' mode.
@@ -393,6 +425,8 @@ def test(epoch, net1, net2):
     correct2 = 0
     correctmean = 0
     correctmean_ori = 0
+    correctmean_ori_softmax = 0
+
     total = 0
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(test_loader):
@@ -401,22 +435,27 @@ def test(epoch, net1, net2):
             outputs2_ori,outputs2 = net2(inputs,use_ph=True)
             score1, predicted = torch.max(outputs1, 1)
             score2, predicted_2 = torch.max(outputs2, 1)
-            #model ensemble for inference
+            #model ensemble for inference 
             outputs_mean_ori = (outputs1_ori + outputs2_ori) / 2
+            outputs_mean_ori_softmax = (F.softmax(outputs1_ori, dim=1) + F.softmax(outputs2_ori, dim=1)) / 2
             _, predicted_mean_ori = torch.max(outputs_mean_ori, 1)
+            _, predicted_mean_ori_softmax = torch.max(outputs_mean_ori_softmax, 1)
             total += targets.size(0)
             correct += predicted.eq(targets).cpu().sum().item()
             correct2 += predicted_2.eq(targets).cpu().sum().item()
             correctmean_ori += predicted_mean_ori.eq(targets).cpu().sum().item()
+            correctmean_ori_softmax += predicted_mean_ori_softmax.eq(targets).cpu().sum().item()
     acc = 100. * correct / total
     acc2 = 100. * correct2 / total
-    accmean_ori = 100. * correctmean_ori / total
-    print("| Test Epoch #%d\t Acc Net1: %.2f%%, Acc Net2: %.2f%% Acc Mean: %.2f%%\n" % (epoch, acc, acc2,  accmean_ori))
-    test_log.write('Epoch:%d   Accuracy:%.2f\n' % (epoch, acc))
+    acc_mean_ori = 100. * correctmean_ori / total
+    acc_mean_ori_softmax = 100. * correctmean_ori_softmax / total
+    print("| Test Epoch #%d\t Acc Net1: %.2f%%, Acc Net2: %.2f%% Acc Mean: %.2f%% Acc Mean SoftMax: %.2f%%\n" % (epoch, acc, acc2,  acc_mean_ori, acc_mean_ori_softmax))
+    test_log.write('Epoch:%d Acc Net1: %.2f, Acc Net2: %.2f, Acc Mean: %.2f Acc Mean SoftMax: %.2f\n' % (epoch, acc, acc2, acc_mean_ori, acc_mean_ori_softmax))
     test_log.flush()
+    return acc_mean_ori, acc_mean_ori_softmax
 
 
-def eval_train(model, all_loss, rho, num_class):
+def eval_train(model, all_loss, rho, num_class, eval_loader):
     w = linear_rampup2(epoch, args.warmup_ep)
     model.eval()
     losses = torch.zeros(50000)
@@ -467,16 +506,23 @@ def create_model():
     return model
 
 
-stats_log = open('./checkpoint/%s_%s_%s' % (args.dataset, args.noise_type, args.num_epochs) + '_stats.txt', 'w')
-test_log = open('./checkpoint/%s_%s_%s' % (args.dataset, args.noise_type, args.num_epochs) + '_acc.txt', 'w')
+stats_log = open(os.path.join(save_dir, '%s_%s_%s_anno_%ss' % (args.dataset, args.noise_type, args.num_epochs, args.no_annotator) + '_stats.txt'), 'w')
+test_log = open(os.path.join(save_dir, '%s_%s_%s_anno_%ss' % (args.dataset, args.noise_type, args.num_epochs, args.no_annotator) + '_acc.txt'), 'w')
 
 warm_up = args.pretrain_ep
 #unique file name to record the synthetic noise for CIFAR-10/100
 time = str(datetime.now())[-6:]
-loader = dataloader.cifarn_dataloader(args.dataset, noise_type=args.noise_type, noise_path=args.noise_path,
-                                      is_human=args.is_human, batch_size=args.batch_size, num_workers=8, \
-                                      root_dir=args.data_path, log=stats_log,
-                                      noise_file='%s/noise_file/%s_%s.json' % (args.data_path,args.noise_type,time),r = args.noise_rate , noise_mode = args.noise_mode)
+loader = dataloader.cifarn_dataloader(args.dataset, 
+                                      noise_type=args.noise_type, 
+                                      noise_path=args.noise_path,
+                                      is_human=args.is_human, 
+                                      batch_size=args.batch_size, 
+                                      num_workers=8,
+                                      root_dir=args.data_path,
+                                      log=stats_log,
+                                      noise_file=args.noise_path,
+                                      r = args.noise_rate,
+                                      noise_mode = args.noise_mode)
 
 print('| Building net')
 dualnet = create_model()
@@ -491,7 +537,7 @@ fmix = FMix()
 CE = nn.CrossEntropyLoss(reduction='none')
 CEloss = nn.CrossEntropyLoss()
 CEsoft = CE_Soft_Label()
-eval_loader, noise_or_not = loader.run('eval_train')
+eval_loader, noise_or_not = loader.run('eval_train', annotator=args.no_annotator)
 test_loader = loader.run('test')
 
 all_loss = [[], []]  
@@ -506,7 +552,7 @@ pi2_unrel = bias_initial(args.num_class)
 for epoch in range(args.num_epochs + 1):
     adjust_learning_rate(args, optimizer1, epoch)
     if epoch < warm_up:
-        warmup_trainloader, noisy_labels = loader.run('warmup')
+        warmup_trainloader  = loader.run('warmup')
         print('Warmup Net1')
         warmup(epoch, dualnet.net1, dualnet.net2, optimizer1, warmup_trainloader)
     else:
@@ -514,7 +560,7 @@ for epoch in range(args.num_epochs + 1):
         prob1, all_loss[0] = eval_train(dualnet.net1, all_loss[0], rho, args.num_class)
         prob2, all_loss[0] = eval_train(dualnet.net2, all_loss[0], rho, args.num_class)
         pred1 = (prob1 > args.p_threshold)
-        total_trainloader, noisy_labels = loader.run('train', pred1, prob1, prob2)  # co-divide
+        total_trainloader = loader.run('train', pred1, prob1, prob2, args.no_annotator)  # co-divide
         pi1,pi2,pi1_unrel,pi2_unrel = train(epoch,dualnet.net1, dualnet.net2, optimizer1, total_trainloader,pi1,pi2,pi1_unrel,pi2_unrel) 
     test(epoch, dualnet.net1, dualnet.net2)
     torch.save(dualnet, f"./{args.dataset}_{args.noise_type}best.pth.tar")
