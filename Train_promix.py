@@ -56,10 +56,11 @@ parser.add_argument('--noise_rate', default=0.2, type=float,
 parser.add_argument('--bias_m', default=0.9999, type=float,
                     help='moving average parameter of bias estimation')
 # parser.add_argument('--num_annotators', default=6, type=int, help='number of annotators')                    
-parser.add_argument('--no_annotator', default=1, type=int, help='number of annotators') # the No. of annotator. Choosing 1 and 3 for training.
+
+parser.add_argument('--no_annotator', default='random_label1', type=str, help='number of annotators') # the No. of annotator. Choosing 1 and 3 for training.
 
 parser.add_argument('--wandb', action='store_true', help='use wandb to log the training process.')
-parser.add_argument('--project_name', default='promix_first_try', type=str, help='wandb project name')
+
 
 args = parser.parse_args()
 [args.rho_start, args.rho_end] = [float(item) for item in args.rho_range.split(',')] # 0.2 and 0.6
@@ -77,7 +78,8 @@ noise_type_map = {'clean': 'clean_label', 'worst': 'worse_label', 'aggre': 'aggr
 
 args.noise_type = noise_type_map[args.noise_type] # same as the annotator. But I need to modify the code here.
 
-running_name = 'Baseline_IDN_single_annotator_' + args.dataset + '_' + args.noise_type + '_' + str(args.no_annotator)
+running_name = 'Baseline_IDN_single_annotator_' + args.dataset + '_' + args.noise_type + '_' + args.no_annotator
+
 
 if args.wandb:
     wandb.init(project=args.project_name, name=running_name, config=args)
@@ -537,7 +539,9 @@ fmix = FMix()
 CE = nn.CrossEntropyLoss(reduction='none')
 CEloss = nn.CrossEntropyLoss()
 CEsoft = CE_Soft_Label()
-eval_loader, noise_or_not = loader.run('eval_train', annotator=args.no_annotator)
+
+eval_loader = loader.run('eval_train', annotator=args.no_annotator)
+
 test_loader = loader.run('test')
 
 all_loss = [[], []]  
@@ -557,10 +561,13 @@ for epoch in range(args.num_epochs + 1):
         warmup(epoch, dualnet.net1, dualnet.net2, optimizer1, warmup_trainloader)
     else:
         rho = args.rho_start + (args.rho_end - args.rho_start) * linear_rampup2(epoch, args.warmup_ep)
-        prob1, all_loss[0] = eval_train(dualnet.net1, all_loss[0], rho, args.num_class)
-        prob2, all_loss[0] = eval_train(dualnet.net2, all_loss[0], rho, args.num_class)
+        prob1, all_loss[0] = eval_train(dualnet.net1, all_loss[0], rho, args.num_class, eval_loader)
+        prob2, all_loss[0] = eval_train(dualnet.net2, all_loss[0], rho, args.num_class, eval_loader)
         pred1 = (prob1 > args.p_threshold)
         total_trainloader = loader.run('train', pred1, prob1, prob2, args.no_annotator)  # co-divide
         pi1,pi2,pi1_unrel,pi2_unrel = train(epoch,dualnet.net1, dualnet.net2, optimizer1, total_trainloader,pi1,pi2,pi1_unrel,pi2_unrel) 
-    test(epoch, dualnet.net1, dualnet.net2)
-    torch.save(dualnet, f"./{args.dataset}_{args.noise_type}best.pth.tar")
+    acc_mean, acc_mean_sm = test(epoch, dualnet.net1, dualnet.net2)
+    
+    if acc_mean > best_acc:
+        best_acc = acc_mean
+        torch.save(dualnet, os.path.join(save_dir, 'best.pth.tar'))
