@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Parameter
+import torchvision.models as models
 
 
 class DualNet(nn.Module):
@@ -18,6 +19,25 @@ class DualNet(nn.Module):
         outputs_2 = self.net2(x)
         outputs_mean = (outputs_1 + outputs_2)/2
         return outputs_mean
+
+
+class DualNet2(nn.Module):
+    def __init__(self, num_class):
+        super().__init__()
+        # self.net1 = models.resnet34(pretrained=True)
+        # self.net2 = models.resnet34(pretrained=True)
+
+        # self.net1.fc = nn.Linear(self.net1.fc.in_features, num_class)
+        # self.net2.fc = nn.Linear(self.net2.fc.in_features, num_class)
+
+        self.net1 = ResNet34(num_classes=num_class)
+        self.net2 = ResNet34(num_classes=num_class) 
+
+    def forward(self,x):
+        outputs_1 = self.net1(x)
+        outputs_2 = self.net2(x)
+        outputs_mean = (outputs_1 + outputs_2)/2
+        return outputs_mean, outputs_1, outputs_2
 
 
 class BasicBlock(nn.Module):
