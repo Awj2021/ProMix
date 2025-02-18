@@ -24,8 +24,4 @@
 # For MULTI-CIFAR100N, what's the difference between noise_type and noise_mode?
 CUDA_VISIBLE_DEVICES=0 python Train_promix.py --noise_type multi_cifar100 --data_path ./cifar-100-python --cosine --dataset cifar100_IDN70 \
     --num_class 100 --rho_range 0.5,0.5 --tau 0.95 --pretrain_ep 30 --debias_output 0.5 --debias_pl 0.5 \
-<<<<<<< HEAD
-    --noise_mode multi_cifar100 --no_annotator 6 --wandb
-=======
-    --noise_mode multi_cifar100 --no_annotator random_label1
->>>>>>> 21aa99e (Single annotator for the cifar30/50/70 IDN)
+    --noise_mode multi_cifar100 --no_annotator aggre_6_label  --wandb

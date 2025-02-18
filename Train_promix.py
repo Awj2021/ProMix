@@ -57,10 +57,12 @@ parser.add_argument('--bias_m', default=0.9999, type=float,
                     help='moving average parameter of bias estimation')
 # parser.add_argument('--num_annotators', default=6, type=int, help='number of annotators')                    
 
-parser.add_argument('--no_annotator', default='random_label1', type=str, help='number of annotators') # the No. of annotator. Choosing 1 and 3 for training.
+parser.add_argument('--no_annotator', default='aggre_label', type=str, 
+                    choices=['aggre_4_label', 'aggre_5_label', 'aggre_2_label','aggre_3_label', 'aggre_6_label'],
+                    help='number of annotators') # the No. of annotator. Choosing 1 and 3 for training.
 
 parser.add_argument('--wandb', action='store_true', help='use wandb to log the training process.')
-
+parser.add_argument('--project_name', default='CIFAR100-IDN-ProMix', type=str, help='wandb project name')
 
 args = parser.parse_args()
 [args.rho_start, args.rho_end] = [float(item) for item in args.rho_range.split(',')] # 0.2 and 0.6
@@ -78,7 +80,7 @@ noise_type_map = {'clean': 'clean_label', 'worst': 'worse_label', 'aggre': 'aggr
 
 args.noise_type = noise_type_map[args.noise_type] # same as the annotator. But I need to modify the code here.
 
-running_name = 'Baseline_IDN_single_annotator_' + args.dataset + '_' + args.noise_type + '_' + args.no_annotator
+running_name = 'Baseline_IDN_single_annotator_' + args.dataset + '_' + args.no_annotator
 
 
 if args.wandb:
@@ -102,7 +104,7 @@ elif args.dataset == 'cifar100':
 elif args.dataset == 'cifar100_IDN30': # cifar-100-python/cifar100_noisy_labels_noise_30.pt
     args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_30.pt'
 elif args.dataset == 'cifar100_IDN50':
-    args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_30.pt'
+    args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_50.pt'
 elif args.dataset == 'cifar100_IDN70':
     args.noise_path = 'cifar-100-python/cifar100_noisy_labels_noise_70.pt'
 else:
@@ -454,6 +456,7 @@ def test(epoch, net1, net2):
     print("| Test Epoch #%d\t Acc Net1: %.2f%%, Acc Net2: %.2f%% Acc Mean: %.2f%% Acc Mean SoftMax: %.2f%%\n" % (epoch, acc, acc2,  acc_mean_ori, acc_mean_ori_softmax))
     test_log.write('Epoch:%d Acc Net1: %.2f, Acc Net2: %.2f, Acc Mean: %.2f Acc Mean SoftMax: %.2f\n' % (epoch, acc, acc2, acc_mean_ori, acc_mean_ori_softmax))
     test_log.flush()
+    wandb.log({'Acc Net1': acc, 'Acc Net2': acc2, 'Acc Mean': acc_mean_ori, 'Acc Mean SoftMax': acc_mean_ori_softmax}) if args.wandb else None
     return acc_mean_ori, acc_mean_ori_softmax
 
 
@@ -556,7 +559,7 @@ pi2_unrel = bias_initial(args.num_class)
 for epoch in range(args.num_epochs + 1):
     adjust_learning_rate(args, optimizer1, epoch)
     if epoch < warm_up:
-        warmup_trainloader  = loader.run('warmup')
+        warmup_trainloader  = loader.run('warmup', annotator=args.no_annotator)
         print('Warmup Net1')
         warmup(epoch, dualnet.net1, dualnet.net2, optimizer1, warmup_trainloader)
     else:
